@@ -60,39 +60,48 @@ jobs:
           set -euo pipefail
           VERSION="$(cat macos/build-script/version/ffmpeg)"
           OUT="$RUNNER_TEMP/out"
+          ARCHIVE="$RUNNER_TEMP/work/source-archive"
           mkdir -p "$OUT"
           cp "$RUNNER_TEMP/work/build/out/bin/ffmpeg" "$RUNNER_TEMP/work/build/out/bin/ffprobe" "$OUT/"
           SRC="racedash-ffmpeg-${VERSION}-macos-arm64-src.tar"
           tar -C "$RUNNER_TEMP/work" -cf "$OUT/$SRC" source-archive
           cp LICENSE-GPL-3.0.txt NOTICE.txt "$OUT/"
-          SOURCES="$(awk '{print $1" "$2}' "$RUNNER_TEMP/work/source-archive/downloads.sha256" | jq -R 'split(" ") | {sha256: .[0], url: .[1]}' | jq -s .)"
+          file_json() {
+            jq -n --arg file "$(basename "$1")" --arg sha256 "$(shasum -a 256 "$1" | cut -d' ' -f1)" \
+              --argjson size "$(stat -f %z "$1")" '{file: $file, sha256: $sha256, size: $size}'
+          }
+          # One entry per downloaded file: archived name, URL, sha256.
+          SOURCES="$(cd "$ARCHIVE/downloads" && while read -r sum url; do
+              name="$(ls | grep "^${sum:0:12}-" | head -n1)"
+              jq -n --arg name "downloads/$name" --arg url "$url" --arg sha256 "$sum" '{name: $name, url: $url, revision: null, stage: null, sha256: $sha256}'
+            done < "$ARCHIVE/downloads.sha256" | jq -s .)"
           jq -n \
-            --arg version "$VERSION" \
-            --arg buildRepo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --arg buildRepoCommit "$GITHUB_SHA" \
-            --arg workflowRunUrl "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg upstreamScript "https://git.martin-riedl.de/ffmpeg/build-script@6a611e19870e197bc37c6e4c7fccddebd3715466" \
-            --arg x264 "0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee" \
+            --arg ffmpegVersion "$VERSION" --arg ffmpegRevision "n${VERSION}" \
+            --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf | sed 's/^ *//' | tr '\n' ' ' | sed 's/ $//')" \
+            --arg racedashFfmpegCommit "$GITHUB_SHA" \
+            --arg runUrl "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg runnerImage "${ImageOS:-unknown} ${ImageVersion:-unknown}" \
-            --arg xcodebuildVersion "$(xcodebuild -version | tr '\n' ' ')" \
+            --arg script "https://git.martin-riedl.de/ffmpeg/build-script" \
+            --arg scriptCommit "6a611e19870e197bc37c6e4c7fccddebd3715466" \
+            --arg x264Commit "0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee" \
             --arg macosVersion "$(sw_vers -productVersion)" \
+            --arg xcodebuildVersion "$(xcodebuild -version | tr '\n' ' ' | sed 's/ $//')" \
             --arg mesonVersion "${RACEDASH_MESON_VERSION:-1.12.1}" \
-            --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf | tr -s ' \n' ' ')" \
-            --arg sourceArchive "$SRC" \
-            --arg sourceArchiveSha256 "$(shasum -a 256 "$OUT/$SRC" | cut -d' ' -f1)" \
-            --arg ffmpegSha256 "$(shasum -a 256 "$OUT/ffmpeg" | cut -d' ' -f1)" \
-            --arg ffprobeSha256 "$(shasum -a 256 "$OUT/ffprobe" | cut -d' ' -f1)" \
+            --argjson ffmpeg "$(file_json "$OUT/ffmpeg")" \
+            --argjson ffprobe "$(file_json "$OUT/ffprobe")" \
+            --argjson sourceArchive "$(file_json "$OUT/$SRC")" \
             --argjson sources "$SOURCES" \
-            '{schema: 1, kind: "build", license: "GPL-3.0-or-later", target: "macos-arm64", version: $version,
-              buildRepo: $buildRepo, buildRepoCommit: $buildRepoCommit, workflowRunUrl: $workflowRunUrl,
-              upstreamScript: $upstreamScript, x264: $x264,
-              runnerImage: $runnerImage, macosVersion: $macosVersion, xcodebuildVersion: $xcodebuildVersion, mesonVersion: $mesonVersion,
-              buildconf: $buildconf,
-              binaries: {ffmpeg: $ffmpegSha256, ffprobe: $ffprobeSha256},
-              sourceArchives: [$sourceArchive], sourceArchiveSha256: $sourceArchiveSha256,
+            '{schema: 2, platform: "darwin-arm64", kind: "build", license: "GPL-3.0-or-later",
+              ffmpegVersion: $ffmpegVersion, ffmpegRevision: $ffmpegRevision, buildconf: $buildconf,
+              racedashFfmpegCommit: $racedashFfmpegCommit, runUrl: $runUrl, runnerImage: $runnerImage,
+              upstream: {script: $script, scriptCommit: $scriptCommit, x264Commit: $x264Commit,
+                         macosVersion: $macosVersion, xcodebuildVersion: $xcodebuildVersion, mesonVersion: $mesonVersion},
+              binaries: {ffmpeg: $ffmpeg, ffprobe: $ffprobe},
+              sourceArchives: [$sourceArchive],
               sources: $sources}' > "$OUT/BUILDINFO.json"
           (cd "$OUT" && shasum -a 256 -- * | grep -v ' SHA256SUMS$' > SHA256SUMS)
           ls -la "$OUT"
+          jq 'del(.sources)' "$OUT/BUILDINFO.json"
 
       - name: Upload assets as a workflow artifact
         uses: actions/upload-artifact@v4

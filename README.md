@@ -53,6 +53,60 @@ The source tar contains:
 
 **To rebuild:** run `macos/build.sh` on an Apple-silicon Mac with Xcode command-line tools. [`build-macos.yml`](.github/workflows/build-macos.yml) shows the exact invocation.
 
+## What is linked into each binary
+
+| Platform | Linked libraries (static) | Licences |
+|---|---|---|
+| macOS arm64 | FFmpeg; x264 (`0480cb05`); libvpx 1.16.0; zlib 1.3.2; Apple system frameworks (VideoToolbox, CoreMedia, CoreVideo, AudioToolbox, Metal, …; GPLv3 system-library exception) | GPL-3.0-or-later (FFmpeg `--enable-gpl --enable-version3`); x264 GPL-2.0-or-later; libvpx BSD-3-Clause; zlib Zlib |
+| Windows x64 | Exactly the libraries BtbN's `win64 gpl 9.0` build enables, listed with their configure flags in `BUILDINFO.json` (`buildconf`) and one source archive each in `sources` | Each archive carries its own licence. The whole binary is GPL-3.0-or-later |
+
+**macOS.** The vendored script also *builds* openssl, libxml2, fribidi, freetype, fontconfig, harfbuzz, libass, libogg and SDL, plus its build tools. Patch 04 keeps every one of them **out** of the binary. The acceptance step fails if any of them is configured in. Their tarballs are still archived, because they are part of what the script ran.
+
+**Never included.** Acceptance and the mirror's licence gate fail a release whose configuration contains any of:
+- `--enable-nonfree`;
+- `--enable-decklink` (a proprietary SDK);
+- `--enable-libklvanc`;
+- `--enable-libopenh264` (Cisco's patent licence covers only Cisco's own binaries);
+- `--enable-libfdk-aac`.
+
+**Windows toolchain.** BtbN's `base-win64` image builds its cross toolchain (GCC, binutils, mingw-w64) with crosstool-ng, which it clones at an unpinned revision. The toolchain is therefore pinned only through the recorded image digest (`upstream.image`). The parts of it that end up in the binary are:
+- libgcc and libstdc++, under the GCC Runtime Library Exception;
+- the mingw-w64 CRT and winpthreads, under permissive licences.
+
+None of these carries a source obligation for the binary. The image definitions are included in the build-repository archive.
+
+## `BUILDINFO.json` (schema 2)
+
+```jsonc
+{
+  "schema": 2,
+  "platform": "darwin-arm64" | "win32-x64" | "linux-x64",
+  "kind": "build" | "mirror",
+  "license": "GPL-3.0-or-later",
+  "ffmpegVersion": "9.0.2" | "n9.0.2-22-g46d8f462ee",   // `ffmpeg -version` starts with "ffmpeg version <ffmpegVersion>"
+  "ffmpegRevision": "n9.0.2" | "<40-hex FFmpeg commit>",  // release tag (mac) or exact commit (mirror)
+  "buildconf": "<the configure line>",
+  "racedashFfmpegCommit": "<commit of this repository>",
+  "runUrl": "<workflow run that produced the release>",
+  "runnerImage": "<ImageOS ImageVersion>",
+  "upstream": {                                           // kind-specific provenance
+    // build:  script, scriptCommit, x264Commit, macosVersion, xcodebuildVersion, mesonVersion
+    // mirror: release, asset, assetSha256, buildRepo, buildRepoCommit, runUrl, image, sourceFetchImage, target, variant, addin
+  },
+  "binaries": {
+    "ffmpeg":  { "file": "ffmpeg[.exe]",  "sha256": "<hex>", "size": <bytes> },
+    "ffprobe": { "file": "ffprobe[.exe]", "sha256": "<hex>", "size": <bytes> }
+  },
+  "sourceArchives": [ { "file": "racedash-ffmpeg-…-src.tar[.partNN]", "sha256": "<hex>", "size": <bytes> } ],
+  "sources": [                                            // every item inside the source archive(s)
+    { "name": "<path in the archive>", "url": "<upstream>", "revision": "<commit|rev|null>",
+      "stage": "<BtbN scripts.d path|null>", "sha256": "<hex>", "extra": "<other SCRIPT_* pins, optional>" }
+  ]
+}
+```
+
+Consumers verify a binary with `binaries.<tool>.sha256`. `SHA256SUMS` lists every release asset, `BUILDINFO.json` included.
+
 ## Licences
 
 - **The ffmpeg/ffprobe binaries and their sources:** GPL-3.0-or-later ([`LICENSE-GPL-3.0.txt`](LICENSE-GPL-3.0.txt)). The individual source archives keep their own licence files.

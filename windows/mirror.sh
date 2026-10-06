@@ -38,10 +38,15 @@ curl -fsSL -o "$WORK/$BTBN_ASSET" "$REL_URL/$BTBN_ASSET"
 curl -fsSL -o "$WORK/btbn-checksums.sha256" "$REL_URL/checksums.sha256"
 (cd "$WORK" && grep " ${BTBN_ASSET}\$" btbn-checksums.sha256 | sha256sum -c -)
 ASSET_SHA256="$(sha256sum "$WORK/$BTBN_ASSET" | cut -d' ' -f1)"
-(cd "$WORK" && unzip -q "$BTBN_ASSET")
-PKG="$WORK/${BTBN_ASSET%.zip}"
+case "$BTBN_ASSET" in
+  *.zip) (cd "$WORK" && unzip -q "$BTBN_ASSET"); PKG="$WORK/${BTBN_ASSET%.zip}" ;;
+  *.tar.xz) tar -C "$WORK" -xf "$WORK/$BTBN_ASSET"; PKG="$WORK/${BTBN_ASSET%.tar.xz}" ;;
+  *) echo "unsupported asset type: $BTBN_ASSET" >&2; exit 1 ;;
+esac
 for tool in ffmpeg ffprobe; do
-  cp "$PKG/bin/${tool}.exe" "$OUT_DIR/${tool}.exe"
+  for f in "$PKG/bin/${tool}.exe" "$PKG/bin/${tool}"; do
+    [[ -f "$f" ]] && cp "$f" "$OUT_DIR/"
+  done
 done
 cp "$PKG/LICENSE.txt" "$OUT_DIR/LICENSE-ffmpeg-upstream.txt"
 
@@ -141,32 +146,65 @@ else
   SRC_PARTS=("$SRC_NAME")
 fi
 
-# 7. BUILDINFO.json and SHA256SUMS.
-SOURCES_JSON="$(cd "$SRC" && for f in *; do jq -n --arg file "$f" --arg sha256 "$(sha256sum "$f" | cut -d' ' -f1)" '{file: $file, sha256: $sha256}'; done | jq -s .)"
+# 7. BUILDINFO.json (schema 2, documented in README.md) and SHA256SUMS.
+case "$BTBN_TARGET" in
+  win64) PLATFORM="win32-x64"; EXE=".exe" ;;
+  linux64) PLATFORM="linux-x64"; EXE="" ;;
+  *) echo "no platform key for target $BTBN_TARGET" >&2; exit 1 ;;
+esac
+FF_VERSION="$(sed -E 's/^ffmpeg-(n[0-9.]+(-[0-9]+-g[0-9a-f]+)?)-.*$/\1/' <<<"$BTBN_ASSET")"
+BUILDCONF="$(strings "$OUT_DIR/ffmpeg${EXE}" | grep -m1 -- '--enable-gpl' | sed -E 's/^.*configuration: //' || true)"
+
+file_json() {  # <path> -> {file, sha256, size}
+  jq -n --arg file "$(basename "$1")" --arg sha256 "$(sha256sum "$1" | cut -d' ' -f1)" \
+    --argjson size "$(stat -c %s "$1")" '{file: $file, sha256: $sha256, size: $size}'
+}
+# One entry per archive in src/: what it is, where it came from, at which revision.
+SOURCES_JSON="$(
+  {
+    jq -n --arg name "ffmpeg-${FF_COMMIT}.tar.xz" --arg url "https://github.com/FFmpeg/FFmpeg" \
+      --arg revision "$FF_COMMIT" --arg sha256 "$(sha256sum "$SRC/ffmpeg-${FF_COMMIT}.tar.xz" | cut -d' ' -f1)" \
+      '{name: $name, url: $url, revision: $revision, stage: null, sha256: $sha256}'
+    jq -n --arg name "FFmpeg-Builds-${BUILD_REPO_COMMIT}.tar.xz" --arg url "https://github.com/BtbN/FFmpeg-Builds" \
+      --arg revision "$BUILD_REPO_COMMIT" --arg sha256 "$(sha256sum "$SRC/FFmpeg-Builds-${BUILD_REPO_COMMIT}.tar.xz" | cut -d' ' -f1)" \
+      '{name: $name, url: $url, revision: $revision, stage: null, sha256: $sha256}'
+    while read -r STAGE CACHE; do
+      vars="$(grep -hE '^SCRIPT_(REPO|MIRROR|COMMIT|REV|BRANCH)[0-9]*=' "$WORK/btbn/$STAGE" | sed -E 's/^([A-Z0-9_]+)="?([^"]*)"?$/\1=\2/')"
+      url="$(grep -m1 -E '^SCRIPT_(REPO|MIRROR)=' <<<"$vars" | cut -d= -f2- || true)"
+      rev="$(grep -m1 -E '^SCRIPT_(COMMIT|REV)=' <<<"$vars" | cut -d= -f2- || true)"
+      jq -n --arg name "$CACHE" --arg url "$url" --arg revision "$rev" --arg stage "$STAGE" \
+        --arg extra "$(grep -vE '^SCRIPT_(REPO|MIRROR|COMMIT|REV)=' <<<"$vars" | tr '\n' ' ' | sed 's/ $//')" \
+        --arg sha256 "$(sha256sum "$SRC/$CACHE" | cut -d' ' -f1)" \
+        '{name: $name, url: $url, revision: $revision, stage: $stage, sha256: $sha256} + (if $extra == "" then {} else {extra: $extra} end)'
+    done < "$WORK/stage-caches.txt"
+  } | jq -s .
+)"
+
 jq -n \
-  --arg upstreamRelease "https://github.com/BtbN/FFmpeg-Builds/releases/tag/${BTBN_TAG}" \
-  --arg upstreamAsset "$BTBN_ASSET" --arg upstreamAssetSha256 "$ASSET_SHA256" \
-  --arg upstreamBuildRepo "https://github.com/BtbN/FFmpeg-Builds" \
-  --arg upstreamBuildRepoCommit "$BUILD_REPO_COMMIT" --arg upstreamRunUrl "$RUN_URL" \
-  --arg upstreamImage "ghcr.io/btbn/ffmpeg-builds/${BTBN_TARGET}-${BTBN_VARIANT}-${BTBN_ADDIN}@${IMAGE_DIGEST}" \
+  --arg platform "$PLATFORM" --arg ffmpegVersion "$FF_VERSION" --arg ffmpegRevision "$FF_COMMIT" \
+  --arg buildconf "$BUILDCONF" \
+  --arg racedashFfmpegCommit "${GITHUB_SHA:-unknown}" \
+  --arg runUrl "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}" \
+  --arg runnerImage "${ImageOS:-unknown} ${ImageVersion:-unknown}" \
+  --arg release "https://github.com/BtbN/FFmpeg-Builds/releases/tag/${BTBN_TAG}" \
+  --arg asset "$BTBN_ASSET" --arg assetSha256 "$ASSET_SHA256" \
+  --arg buildRepo "https://github.com/BtbN/FFmpeg-Builds" --arg buildRepoCommit "$BUILD_REPO_COMMIT" \
+  --arg upstreamRunUrl "$RUN_URL" \
+  --arg image "ghcr.io/btbn/ffmpeg-builds/${BTBN_TARGET}-${BTBN_VARIANT}-${BTBN_ADDIN}@${IMAGE_DIGEST}" \
   --arg sourceFetchImage "$BASE_IMAGE_DIGEST" \
   --arg target "$BTBN_TARGET" --arg variant "$BTBN_VARIANT" --arg addin "$BTBN_ADDIN" \
-  --arg ffmpegRepo "https://github.com/FFmpeg/FFmpeg" --arg ffmpegRevision "$FF_COMMIT" \
-  --arg buildRepo "https://github.com/${GITHUB_REPOSITORY:-g30r93g/racedash-ffmpeg}" \
-  --arg buildRepoCommit "${GITHUB_SHA:-unknown}" \
-  --arg workflowRunUrl "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}" \
-  --arg ffmpegSha256 "$(sha256sum "$OUT_DIR/ffmpeg.exe" | cut -d' ' -f1)" \
-  --arg ffprobeSha256 "$(sha256sum "$OUT_DIR/ffprobe.exe" | cut -d' ' -f1)" \
-  --argjson sourceArchives "$(printf '%s\n' "${SRC_PARTS[@]}" | jq -R . | jq -s .)" \
+  --argjson ffmpeg "$(file_json "$OUT_DIR/ffmpeg${EXE}")" \
+  --argjson ffprobe "$(file_json "$OUT_DIR/ffprobe${EXE}")" \
+  --argjson sourceArchives "$(for f in "${SRC_PARTS[@]}"; do file_json "$OUT_DIR/$f"; done | jq -s .)" \
   --argjson sources "$SOURCES_JSON" \
-  '{schema: 1, kind: "mirror", license: "GPL-3.0-or-later",
-    target: $target, variant: $variant, addin: $addin,
-    upstreamRelease: $upstreamRelease, upstreamAsset: $upstreamAsset, upstreamAssetSha256: $upstreamAssetSha256,
-    upstreamBuildRepo: $upstreamBuildRepo, upstreamBuildRepoCommit: $upstreamBuildRepoCommit,
-    upstreamRunUrl: $upstreamRunUrl, upstreamImage: $upstreamImage, sourceFetchImage: $sourceFetchImage,
-    ffmpegRepo: $ffmpegRepo, ffmpegRevision: $ffmpegRevision,
-    buildRepo: $buildRepo, buildRepoCommit: $buildRepoCommit, workflowRunUrl: $workflowRunUrl,
-    binaries: {"ffmpeg.exe": $ffmpegSha256, "ffprobe.exe": $ffprobeSha256},
+  '{schema: 2, platform: $platform, kind: "mirror", license: "GPL-3.0-or-later",
+    ffmpegVersion: $ffmpegVersion, ffmpegRevision: $ffmpegRevision, buildconf: $buildconf,
+    racedashFfmpegCommit: $racedashFfmpegCommit, runUrl: $runUrl, runnerImage: $runnerImage,
+    upstream: {release: $release, asset: $asset, assetSha256: $assetSha256,
+               buildRepo: $buildRepo, buildRepoCommit: $buildRepoCommit, runUrl: $upstreamRunUrl,
+               image: $image, sourceFetchImage: $sourceFetchImage,
+               target: $target, variant: $variant, addin: $addin},
+    binaries: {ffmpeg: $ffmpeg, ffprobe: $ffprobe},
     sourceArchives: $sourceArchives,
     sources: $sources}' > "$OUT_DIR/BUILDINFO.json"
 

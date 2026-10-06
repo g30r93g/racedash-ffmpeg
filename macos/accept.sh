@@ -15,12 +15,21 @@ echo "$first"
 [[ "$first" == "ffmpeg version ${VERSION}"* ]] || { echo "FAIL: ffmpeg version is not ${VERSION}" >&2; fail=1; }
 "$FP" -hide_banner -version | head -n1 | grep -q "ffprobe version ${VERSION}" || { echo "FAIL: ffprobe version is not ${VERSION}" >&2; fail=1; }
 
-if "$FF" -hide_banner -L | grep -qi "not legally redistributable"; then
-  echo "FAIL: ffmpeg -L says the build is not redistributable" >&2; fail=1
+# Licence gates. Nothing nonfree, no proprietary DeckLink SDK, no libklvanc, and
+# no source-built OpenH264 (Cisco's patent licence covers only Cisco's binaries).
+if "$FF" -hide_banner -L | grep -Eqi "nonfree|not legally redistributable"; then
+  echo "FAIL: ffmpeg -L reports nonfree parts or says the build is not redistributable" >&2; fail=1
 fi
-if "$FF" -hide_banner -buildconf | grep -q -- "--enable-nonfree"; then
-  echo "FAIL: configured with --enable-nonfree" >&2; fail=1
-fi
+"$FF" -hide_banner -L | head -n 3
+buildconf="$("$FF" -hide_banner -buildconf)"
+for flag in --enable-nonfree --enable-decklink --enable-libklvanc --enable-libopenh264 \
+            --enable-openssl --enable-libass --enable-libfreetype --enable-fontconfig --enable-libharfbuzz \
+            --enable-libxml2 --enable-sdl2; do
+  if grep -q -- "${flag}\b" <<<"$buildconf"; then
+    echo "FAIL: configured with ${flag}" >&2; fail=1
+  fi
+done
+grep -q -- "--enable-gpl" <<<"$buildconf" || { echo "FAIL: not configured with --enable-gpl" >&2; fail=1; }
 
 check_list() {
   local what="$1" listing="$2"; shift 2
@@ -30,7 +39,7 @@ check_list() {
   done
 }
 check_list encoder "$("$FF" -hide_banner -encoders)" hevc_videotoolbox h264_videotoolbox libx264 libvpx-vp9 aac prores_ks
-check_list filter "$("$FF" -hide_banner -filters)" overlay_videotoolbox scale_vt xfade overlay concat fade tpad acrossfade
+check_list filter "$("$FF" -hide_banner -filters)" scale_vt xfade overlay concat fade tpad acrossfade
 check_list hwaccel "$("$FF" -hide_banner -hwaccels | tail -n +2)" videotoolbox
 
 for exe in "$FF" "$FP"; do

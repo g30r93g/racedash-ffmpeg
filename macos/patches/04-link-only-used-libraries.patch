@@ -1,0 +1,22 @@
+--- a/script/build-ffmpeg.sh	2026-10-06 22:33:53
++++ b/script/build-ffmpeg.sh	2026-10-06 22:33:53
+@@ -64,8 +64,18 @@
+ export LDFLAGS="-L${TOOL_DIR}/lib"
+ export CPPFLAGS="-I${TOOL_DIR}/include"
+ # --pkg-config-flags="--static" is required to respect the Libs.private flags of the *.pc files
++# racedash-ffmpeg: link only what RaceDash uses. The script always builds its
++# base libraries; keep them out of the binary. Drop their enable flags, and
++# disable SDL (ffplay and the sdl2 output device) and X11.
++RACEDASH_FLAGS=""
++for flag in $FFMPEG_LIB_FLAGS; do
++    case "$flag" in
++        --enable-openssl|--enable-libfreetype|--enable-fontconfig|--enable-libharfbuzz|--enable-libass|--enable-libxml2) ;;
++        *) RACEDASH_FLAGS="$RACEDASH_FLAGS $flag" ;;
++    esac
++done
+ ./configure --prefix="$OUT_DIR" --pkg-config-flags="--static" --extra-version="$EXTRA_VERSION" \
+-    --enable-gray --enable-libxml2 $FFMPEG_LIB_FLAGS
++    --enable-gray --disable-ffplay --disable-sdl2 --disable-libxcb --disable-xlib $RACEDASH_FLAGS
+ checkStatus $? "configuration failed"
+ 
+ # start build

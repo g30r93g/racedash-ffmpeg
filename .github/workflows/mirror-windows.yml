@@ -61,15 +61,18 @@ jobs:
           TRACE: "1"
         run: bash windows/mirror.sh
 
-      - name: Check the configure string
+      - name: Licence gates on the configure string
         run: |
-          OUT="$RUNNER_TEMP/out"
-          CONF="$(strings "$OUT/ffmpeg.exe" | grep -m1 -- '--enable-gpl' || true)"
-          [[ -n "$CONF" ]] || { echo "expected a GPL build (no --enable-gpl in the binary)" >&2; exit 1; }
-          if grep -q -- '--enable-nonfree' <<<"$CONF"; then
-            echo "binary was configured with --enable-nonfree: not redistributable" >&2; exit 1
-          fi
+          # The binaries cannot run here, so `ffmpeg -L` is not available; its
+          # nonfree line is driven by --enable-nonfree, which is checked instead.
+          CONF="$(jq -r .buildconf "$RUNNER_TEMP/out/BUILDINFO.json")"
           echo "$CONF"
+          fail=0
+          grep -q -- '--enable-gpl' <<<"$CONF" || { echo "FAIL: not configured with --enable-gpl" >&2; fail=1; }
+          for flag in --enable-nonfree --enable-decklink --enable-libklvanc --enable-libopenh264 --enable-libfdk-aac; do
+            if grep -q -- "${flag}\b" <<<"$CONF"; then echo "FAIL: configured with ${flag}" >&2; fail=1; fi
+          done
+          exit $fail
 
       - name: Create draft release (published by hand after review)
         env:
