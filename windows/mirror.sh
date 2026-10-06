@@ -79,18 +79,26 @@ git -C "$WORK/ffmpeg" archive --format=tar --prefix="ffmpeg-${FF_COMMIT}/" "$FF_
 
 # 5. Source: every enabled dependency stage, fetched with BtbN's own download commands.
 (cd "$WORK/btbn" && ./generate.sh "$BTBN_TARGET" "$BTBN_VARIANT" "$BTBN_ADDIN") || { echo "generate.sh failed" >&2; exit 1; }
-mapfile -t STAGE_CACHES < <(grep -o '\.cache/downloads/[^,[:space:]]*\.tar\.xz' "$WORK/btbn/Dockerfile" | sed 's|.cache/downloads/||' | sort -u)
-[[ ${#STAGE_CACHES[@]} -gt 0 ]] || { echo "generate.sh produced no download stages" >&2; exit 1; }
-printf '%s\n' "${STAGE_CACHES[@]}" > "$WORK/stage-caches.txt"
+# Pair each stage script with the source cache it mounts. generate.sh writes
+# `ENV SELF="<script>" ...` immediately before that stage's RUN line.
+awk '
+  /^ENV SELF="/ { match($0, /SELF="[^"]+"/); self = substr($0, RSTART + 6, RLENGTH - 7); next }
+  /\.cache\/downloads\// && self != "" {
+    match($0, /\.cache\/downloads\/[^,[:space:]]+\.tar\.xz/)
+    print self, substr($0, RSTART + 17, RLENGTH - 17); self = ""
+  }
+' "$WORK/btbn/Dockerfile" | sort -u > "$WORK/stage-caches.txt"
+[[ -s "$WORK/stage-caches.txt" ]] || { echo "generate.sh produced no download stages" >&2; exit 1; }
+mapfile -t STAGE_CACHES < <(cut -d' ' -f2 "$WORK/stage-caches.txt")
+echo "enabled stages with sources: ${#STAGE_CACHES[@]}"
 
 DL_SCRIPTS="$WORK/dl-stages"
 mkdir -p "$DL_SCRIPTS" "$WORK/dldir"
-for CACHE in "${STAGE_CACHES[@]}"; do
+while read -r STAGE CACHE; do
   STAGENAME="${CACHE%_*}"
-  STAGE="$(cd "$WORK/btbn" && ls scripts.d/${STAGENAME}.sh scripts.d/*/${STAGENAME}.sh 2>/dev/null | head -n1)"
-  [[ -n "$STAGE" ]] || { echo "no script for stage $STAGENAME" >&2; exit 1; }
+  [[ -f "$WORK/btbn/$STAGE" ]] || { echo "no script $STAGE for $CACHE" >&2; exit 1; }
   # Same body as BtbN download.sh, minus the hash-only mode.
-  cat >"$DL_SCRIPTS/${STAGENAME}.sh" <<EOF
+  cat >"$DL_SCRIPTS/${STAGENAME}.sh" <<STAGE_EOF
 set -xe -o pipefail
 shopt -s dotglob
 source /dl_functions.sh
@@ -104,8 +112,8 @@ cd "\$WORKDIR"
 eval "set -e; \$STG"
 tar -I "xz -T0" -cpf "\$TGT.tmp" .
 mv "\$TGT.tmp" "\$TGT"
-EOF
-done
+STAGE_EOF
+done < "$WORK/stage-caches.txt"
 
 BASE_IMAGE="ghcr.io/btbn/ffmpeg-builds/base:latest"
 docker pull -q "$BASE_IMAGE"
