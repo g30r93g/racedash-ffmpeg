@@ -54,11 +54,15 @@ BUILD_REPO_COMMIT="$(jq -r .head_sha <<<"$RUN_JSON")"
 RUN_URL="$(jq -r .html_url <<<"$RUN_JSON")"
 [[ "$(jq -r .name <<<"$RUN_JSON")" == "Build FFmpeg" && "$(jq -r .conclusion <<<"$RUN_JSON")" == "success" ]] || {
   echo "run ${BTBN_RUN_ID} is not a successful Build FFmpeg run" >&2; exit 1; }
-# The release must have been published after the run started, on the same day.
-REL_CREATED="$(gh api "repos/BtbN/FFmpeg-Builds/releases/tags/${BTBN_TAG}" -q .created_at)"
+# The release tag must point at the run's commit, and the release must have
+# been published after the run started, on the same day.
+TAG_COMMIT="$(gh api "repos/BtbN/FFmpeg-Builds/git/ref/tags/${BTBN_TAG}" -q .object.sha)"
+[[ "$TAG_COMMIT" == "$BUILD_REPO_COMMIT" ]] || {
+  echo "tag ${BTBN_TAG} points at ${TAG_COMMIT}, run ${BTBN_RUN_ID} built ${BUILD_REPO_COMMIT}" >&2; exit 1; }
+REL_PUBLISHED="$(gh api "repos/BtbN/FFmpeg-Builds/releases/tags/${BTBN_TAG}" -q .published_at)"
 RUN_STARTED="$(jq -r .run_started_at <<<"$RUN_JSON")"
-[[ "$REL_CREATED" > "$RUN_STARTED" && "${REL_CREATED:0:10}" == "${RUN_STARTED:0:10}" ]] || {
-  echo "release ${BTBN_TAG} (${REL_CREATED}) does not follow run ${BTBN_RUN_ID} (${RUN_STARTED})" >&2; exit 1; }
+[[ "$REL_PUBLISHED" > "$RUN_STARTED" && "${REL_PUBLISHED:0:10}" == "${RUN_STARTED:0:10}" ]] || {
+  echo "release ${BTBN_TAG} (published ${REL_PUBLISHED}) does not follow run ${BTBN_RUN_ID} (${RUN_STARTED})" >&2; exit 1; }
 
 # 3. Source: BtbN build repository at that commit (scripts, patches, image definitions).
 git clone -q https://github.com/BtbN/FFmpeg-Builds.git "$WORK/btbn"
