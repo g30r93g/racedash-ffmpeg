@@ -91,7 +91,7 @@ jobs:
             done < "$ARCHIVE/downloads.sha256" | jq -s .)"
           jq -n \
             --arg ffmpegVersion "$VERSION" --arg ffmpegRevision "n${VERSION}" \
-            --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf | sed 's/^ *//' | tr '\n' ' ' | sed 's/ $//')" \
+            --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf 2>/dev/null | grep -- '^ *--' | sed 's/^ *//' | tr '\n' ' ' | sed 's/ $//')" \
             --arg racedashFfmpegCommit "$GITHUB_SHA" \
             --arg runUrl "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg runnerImage "${ImageOS:-unknown} ${ImageVersion:-unknown}" \
