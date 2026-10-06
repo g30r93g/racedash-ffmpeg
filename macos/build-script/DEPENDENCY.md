@@ -1,0 +1,64 @@
+# Dependency
+Some libraries have dependencies to others:
+- nasm
+- libiconv
+- pkg-config
+- zlib
+- openssl
+- cmake
+    - requires openssl
+- ninja
+    - requires cmake
+- libxml2
+    - requires pkg-config
+    - uses zlib
+- fribidi
+- freetype
+- fontconfig
+    - requires libxml2
+- harfbuzz
+    - requires python3 + pip virtualenv
+    - requires ninja
+- sdl
+- libbluray
+    - requires libxml2
+    - requires freetype
+    - requires fontconfig
+- snappy
+- srt
+    - requires cmake
+    - requires openssl
+- libvmaf
+    - requires python3 + pip virtualenv
+    - requires ninja
+- libass
+    - requires fribidi
+    - requires freetype
+    - requires fontconfig
+    - requires harfbuzz
+- libklvanc
+- libogg
+- zimg
+- zvbi
+- aom
+- dav1d
+    - requires python3 + pip virtualenv
+    - requires ninja
+- openh264
+- openJPEG
+- rav1e
+- svt-av1
+- vpx
+- vvenc
+    - requires cmake
+- libwebp
+- x264
+- x265
+- lame
+- opus
+- libvorbis
+    - requires libogg
+- libtheora
+    - requires libogg
+    - requires libvorbis
+- decklink

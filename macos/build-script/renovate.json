@@ -1,0 +1,244 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>ci/renovate//configs/base"
+  ],
+  "baseBranchPatterns": [
+    "develop"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/aom"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "aom",
+      "packageNameTemplate": "https://aomedia.googlesource.com/aom",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/dav1d"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "dav1d",
+      "packageNameTemplate": "https://code.videolan.org/videolan/dav1d.git",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/ffmpeg"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "aom",
+      "packageNameTemplate": "https://git.ffmpeg.org/ffmpeg.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^n(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/fontconfig"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "fontconfig",
+      "packageNameTemplate": "https://gitlab.freedesktop.org/fontconfig/fontconfig.git",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/freetype"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "freetype",
+      "packageNameTemplate": "https://gitlab.freedesktop.org/freetype/freetype.git",
+      "versioningTemplate": "regex:^(?<major>\\d+)[-.](?<minor>\\d+)[-.](?<patch>\\d+)$",
+      "extractVersionTemplate": "^VER-(?<version>[0-9-]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/fribidi"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "fribidi",
+      "packageNameTemplate": "https://github.com/fribidi/fribidi.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/harfbuzz"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "harfbuzz",
+      "packageNameTemplate": "https://github.com/harfbuzz/harfbuzz.git",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libass"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libass",
+      "packageNameTemplate": "https://github.com/libass/libass.git",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libbluray"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libbluray",
+      "packageNameTemplate": "https://code.videolan.org/videolan/libbluray.git",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libiconv"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libiconv",
+      "packageNameTemplate": "git://git.savannah.gnu.org/libiconv.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libklvanc"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libklvanc",
+      "packageNameTemplate": "https://github.com/stoth68000/libklvanc.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^vid.obe.(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libogg"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libogg",
+      "packageNameTemplate": "https://gitlab.xiph.org/xiph/ogg.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libtheora"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libtheora",
+      "packageNameTemplate": "https://gitlab.xiph.org/xiph/theora.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libvmaf"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libvmaf",
+      "packageNameTemplate": "https://github.com/Netflix/vmaf.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libvorbis"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libvorbis",
+      "packageNameTemplate": "https://gitlab.xiph.org/xiph/vorbis.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libwebp"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libwebp",
+      "packageNameTemplate": "https://chromium.googlesource.com/webm/libwebp",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "version/libxml2"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>[0-9.]+)$"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libxml2",
+      "packageNameTemplate": "https://gitlab.gnome.org/GNOME/libxml2.git",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$"
+    }
+  ]
+}

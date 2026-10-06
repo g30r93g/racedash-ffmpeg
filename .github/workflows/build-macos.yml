@@ -1,0 +1,120 @@
+name: Build macOS (arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict_sources:
+        description: Fail on any download without a pinned sha256 (NO only to bootstrap macos/sources.sha256)
+        type: choice
+        options: ['YES', 'NO']
+        default: 'YES'
+      release:
+        description: Create a draft release when acceptance passes
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python with virtualenv (the build script creates its meson venv with it)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install --quiet virtualenv
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        env:
+          RACEDASH_SOURCES_STRICT: ${{ inputs.strict_sources }}
+        run: bash macos/build.sh "$RUNNER_TEMP/work"
+
+      - name: Upload the download checksums (bootstrap input for macos/sources.sha256)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloads-sha256
+          path: ${{ runner.temp }}/work/source-archive/downloads.sha256
+          if-no-files-found: ignore
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ${{ runner.temp }}/work/build/log
+          if-no-files-found: ignore
+
+      - name: Acceptance
+        run: |
+          VERSION="$(cat macos/build-script/version/ffmpeg)"
+          bash macos/accept.sh "$RUNNER_TEMP/work/build/out/bin" "$VERSION"
+
+      - name: Assemble release assets
+        run: |
+          set -euo pipefail
+          VERSION="$(cat macos/build-script/version/ffmpeg)"
+          OUT="$RUNNER_TEMP/out"
+          mkdir -p "$OUT"
+          cp "$RUNNER_TEMP/work/build/out/bin/ffmpeg" "$RUNNER_TEMP/work/build/out/bin/ffprobe" "$OUT/"
+          SRC="racedash-ffmpeg-${VERSION}-macos-arm64-src.tar"
+          tar -C "$RUNNER_TEMP/work" -cf "$OUT/$SRC" source-archive
+          cp LICENSE-GPL-3.0.txt NOTICE.txt "$OUT/"
+          SOURCES="$(awk '{print $1" "$2}' "$RUNNER_TEMP/work/source-archive/downloads.sha256" | jq -R 'split(" ") | {sha256: .[0], url: .[1]}' | jq -s .)"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg buildRepo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --arg buildRepoCommit "$GITHUB_SHA" \
+            --arg workflowRunUrl "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg upstreamScript "https://git.martin-riedl.de/ffmpeg/build-script@6a611e19870e197bc37c6e4c7fccddebd3715466" \
+            --arg x264 "0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee" \
+            --arg runnerImage "${ImageOS:-unknown} ${ImageVersion:-unknown}" \
+            --arg xcodebuildVersion "$(xcodebuild -version | tr '\n' ' ')" \
+            --arg macosVersion "$(sw_vers -productVersion)" \
+            --arg mesonVersion "${RACEDASH_MESON_VERSION:-1.12.1}" \
+            --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf | tr -s ' \n' ' ')" \
+            --arg sourceArchive "$SRC" \
+            --arg sourceArchiveSha256 "$(shasum -a 256 "$OUT/$SRC" | cut -d' ' -f1)" \
+            --arg ffmpegSha256 "$(shasum -a 256 "$OUT/ffmpeg" | cut -d' ' -f1)" \
+            --arg ffprobeSha256 "$(shasum -a 256 "$OUT/ffprobe" | cut -d' ' -f1)" \
+            --argjson sources "$SOURCES" \
+            '{schema: 1, kind: "build", license: "GPL-3.0-or-later", target: "macos-arm64", version: $version,
+              buildRepo: $buildRepo, buildRepoCommit: $buildRepoCommit, workflowRunUrl: $workflowRunUrl,
+              upstreamScript: $upstreamScript, x264: $x264,
+              runnerImage: $runnerImage, macosVersion: $macosVersion, xcodebuildVersion: $xcodebuildVersion, mesonVersion: $mesonVersion,
+              buildconf: $buildconf,
+              binaries: {ffmpeg: $ffmpegSha256, ffprobe: $ffprobeSha256},
+              sourceArchives: [$sourceArchive], sourceArchiveSha256: $sourceArchiveSha256,
+              sources: $sources}' > "$OUT/BUILDINFO.json"
+          (cd "$OUT" && shasum -a 256 -- * | grep -v ' SHA256SUMS$' > SHA256SUMS)
+          ls -la "$OUT"
+
+      - name: Upload assets as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/out
+
+      - name: Create draft release (published by hand after review)
+        if: ${{ inputs.release && inputs.strict_sources == 'YES' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          VERSION="$(cat macos/build-script/version/ffmpeg)"
+          TAG="ffmpeg-${VERSION}-macos-arm64-${RUN_NUMBER}"
+          {
+            echo "FFmpeg \`${VERSION}\` for macOS arm64, built by this repository from the vendored Martin Riedl build script (6a611e1) with the patches in \`macos/patches\`."
+            echo
+            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`)."
+            echo "- Complete corresponding source: \`racedash-ffmpeg-${VERSION}-macos-arm64-src.tar\`. It holds every tarball the build downloaded (each checked against \`macos/sources.sha256\`) and the scripts as they ran."
+            echo "- Acceptance passed: no nonfree parts; VideoToolbox, libx264, libvpx-vp9 and ProRes encoders; overlay_videotoolbox; system-only linkage; crossfade smoke test."
+            echo "- Provenance and checksums: \`BUILDINFO.json\`, \`SHA256SUMS\`."
+            echo "- Produced by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --draft --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/out/*

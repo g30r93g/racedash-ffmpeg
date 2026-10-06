@@ -1,0 +1,94 @@
+name: Mirror Windows build (BtbN)
+
+on:
+  workflow_dispatch:
+    inputs:
+      btbn_tag:
+        description: BtbN/FFmpeg-Builds release tag
+        required: true
+        default: autobuild-2026-10-06-13-06
+      btbn_asset:
+        description: Release asset (a static gpl or lgpl build; never nonfree)
+        required: true
+        default: ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip
+      btbn_run_id:
+        description: Id of the BtbN "Build FFmpeg" run that produced the release
+        required: true
+        default: '37462055680'
+      target:
+        description: BtbN target
+        required: true
+        default: win64
+      variant:
+        description: BtbN variant
+        required: true
+        default: gpl
+      addin:
+        description: BtbN version addin
+        required: true
+        default: '9.0'
+      image_digest:
+        description: Digest of the target-variant image the run used (from its "Build ffmpeg" job log)
+        required: true
+        default: sha256:eb2d665a2ebf72f1578b03fea4d05eddb0508d206aaaed704de554dff832077f
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Mirror binary and collect source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BTBN_TAG: ${{ inputs.btbn_tag }}
+          BTBN_ASSET: ${{ inputs.btbn_asset }}
+          BTBN_RUN_ID: ${{ inputs.btbn_run_id }}
+          BTBN_TARGET: ${{ inputs.target }}
+          BTBN_VARIANT: ${{ inputs.variant }}
+          BTBN_ADDIN: ${{ inputs.addin }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          OUT_DIR: ${{ runner.temp }}/out
+        run: bash windows/mirror.sh
+
+      - name: Check the configure string
+        run: |
+          OUT="$RUNNER_TEMP/out"
+          CONF="$(strings "$OUT/ffmpeg.exe" | grep -m1 -- '--enable-gpl' || true)"
+          [[ -n "$CONF" ]] || { echo "expected a GPL build (no --enable-gpl in the binary)" >&2; exit 1; }
+          if grep -q -- '--enable-nonfree' <<<"$CONF"; then
+            echo "binary was configured with --enable-nonfree: not redistributable" >&2; exit 1
+          fi
+          echo "$CONF"
+
+      - name: Create draft release (published by hand after review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ inputs.btbn_asset }}
+          BTBN_TAG: ${{ inputs.btbn_tag }}
+          TARGET: ${{ inputs.target }}
+          VARIANT: ${{ inputs.variant }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          OUT="$RUNNER_TEMP/out"
+          REV="$(jq -r .ffmpegRevision "$OUT/BUILDINFO.json")"
+          VER="$(sed -E 's/^ffmpeg-(n[0-9.]+-[0-9]+-g[0-9a-f]+)-.*$/\1/' <<<"$ASSET")"
+          TAG="ffmpeg-${VER}-${TARGET}-${RUN_NUMBER}"
+          {
+            echo "FFmpeg \`${VER}\` (${TARGET}, ${VARIANT}, static), mirrored from BtbN/FFmpeg-Builds release \`${BTBN_TAG}\`."
+            echo
+            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`)."
+            echo "- Complete corresponding source: the \`racedash-ffmpeg-*-src.tar\` asset(s) on this release. FFmpeg @ \`${REV}\`, every enabled dependency exactly as BtbN's build fetched it, and the BtbN build repository at the commit that built this release."
+            echo "- Provenance and checksums: \`BUILDINFO.json\`, \`SHA256SUMS\`."
+            echo "- Produced by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --draft --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "$OUT"/*

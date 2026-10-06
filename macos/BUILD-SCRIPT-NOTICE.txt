@@ -1,0 +1,15 @@
+macos/build-script/ is a verbatim copy of Martin Riedl's FFmpeg build script
+  https://git.martin-riedl.de/ffmpeg/build-script
+  commit 6a611e19870e197bc37c6e4c7fccddebd3715466 ("chore: ffmpeg (version 9.0.2)", 2026-09-20)
+Copyright 2021 Martin Riedl. Licensed under the Apache License, Version 2.0
+(macos/build-script/LICENSE).
+
+The copy is not edited in place. macos/build.sh applies the patches in
+macos/patches/ to a working copy at build time. The changes are:
+  01-download-sha256-archive.patch  download() verifies every file against
+                                    macos/sources.sha256 and keeps a copy for the
+                                    source archive; meson is installed at a pinned version.
+  02-pin-x264.patch                 x264 from commit 0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee
+                                    instead of the moving master branch.
+  03-extra-version.patch            the version suffix names this build
+                                    ("racedash-ffmpeg") instead of the upstream build server.

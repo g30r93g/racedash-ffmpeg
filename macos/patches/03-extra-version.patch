@@ -1,0 +1,11 @@
+--- a/script/build-ffmpeg.sh	2026-10-06 19:04:50
++++ b/script/build-ffmpeg.sh	2026-10-06 19:04:50
+@@ -60,7 +60,7 @@
+ checkStatus $? "change directory failed"
+ 
+ # prepare build
+-EXTRA_VERSION="https://www.martin-riedl.de"
++EXTRA_VERSION="racedash-ffmpeg"
+ export LDFLAGS="-L${TOOL_DIR}/lib"
+ export CPPFLAGS="-I${TOOL_DIR}/include"
+ # --pkg-config-flags="--static" is required to respect the Libs.private flags of the *.pc files

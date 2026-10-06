@@ -1,0 +1,34 @@
+RaceDash ffmpeg / ffprobe binaries
+==================================
+
+The `ffmpeg` and `ffprobe` executables published by this repository (and
+bundled by the RaceDash desktop application) are builds of FFmpeg
+(https://ffmpeg.org), configured with --enable-gpl --enable-version3.
+They are licensed under the GNU General Public License, version 3 or later.
+See LICENSE-GPL-3.0.txt.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+These are unofficial builds; they are not endorsed by the FFmpeg project.
+
+Complete corresponding source
+-----------------------------
+Every release of https://github.com/g30r93g/racedash-ffmpeg carries, next to
+the binaries, the complete corresponding source for those binaries: the
+FFmpeg source at the exact revision, the source of every library linked into
+them at the exact version, and the scripts used to control compilation.
+BUILDINFO.json on each release lists every source archive with its SHA-256.
+
+The source for a binary stays available from the same release, next to the
+binary, for as long as the binary is distributed.
+
+Origins
+-------
+- Windows (and Linux, for CI): mirrored, unmodified, from
+  BtbN/FFmpeg-Builds (https://github.com/BtbN/FFmpeg-Builds, MIT licence for
+  its build scripts). The exact upstream release, build run, build-repository
+  commit and image digest are recorded in BUILDINFO.json.
+- macOS: built by this repository's build-macos workflow, using a vendored copy
+  of Martin Riedl's FFmpeg build script
+  (https://git.martin-riedl.de/ffmpeg/build-script, commit 6a611e1,
+  Apache License 2.0; see macos/build-script/LICENSE and
+  macos/BUILD-SCRIPT-NOTICE.txt for our modifications).

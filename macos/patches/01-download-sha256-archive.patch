@@ -1,0 +1,43 @@
+--- a/script/functions.sh	2026-10-06 19:04:50
++++ b/script/functions.sh	2026-10-06 19:04:59
+@@ -46,6 +46,31 @@
+     URL=$1
+     NAME=$2
+     curl -o "$NAME" -L -f "$URL"
++    if [ $? -ne 0 ]; then
++        return 1
++    fi
++    SUM="$(shasum -a 256 "$NAME" | cut -d' ' -f1)"
++    # racedash-ffmpeg: verify against the pinned checksum list
++    if [ -n "$RACEDASH_SOURCES_SHA256" ]; then
++        EXPECTED="$(awk -v u="$URL" '$2 == u { print $1 }' "$RACEDASH_SOURCES_SHA256")"
++        if [ -z "$EXPECTED" ]; then
++            if [ "$RACEDASH_SOURCES_STRICT" = "YES" ]; then
++                echo "no pinned sha256 for $URL" >&2
++                return 1
++            fi
++            echo "warning: no pinned sha256 for $URL (recorded as $SUM)" >&2
++        elif [ "$EXPECTED" != "$SUM" ]; then
++            echo "sha256 mismatch for $URL: expected $EXPECTED, got $SUM" >&2
++            return 1
++        fi
++    fi
++    # racedash-ffmpeg: keep every downloaded file for the corresponding source
++    if [ -n "$RACEDASH_SOURCE_ARCHIVE" ]; then
++        mkdir -p "$RACEDASH_SOURCE_ARCHIVE/downloads"
++        cp "$NAME" "$RACEDASH_SOURCE_ARCHIVE/downloads/$(echo "$SUM" | cut -c1-12)-$(basename "$NAME")"
++        echo "$SUM  $URL" >> "$RACEDASH_SOURCE_ARCHIVE/downloads.sha256"
++    fi
++    return 0
+ }
+ 
+ prepareMeson(){
+@@ -60,7 +85,7 @@
+     else
+         . .venv/bin/activate
+         checkStatus $? "python activate virtual environment failed"
+-        pip install meson
++        pip install "meson==${RACEDASH_MESON_VERSION:-1.12.1}"
+         checkStatus $? "python meson installation failed"
+     fi
+ }

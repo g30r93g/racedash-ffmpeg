@@ -1,0 +1,3 @@
+# sha256  url  of every file the macOS build downloads (macos/build.sh verifies each one).
+# Regenerate after a version change: run build-macos with strict_sources=NO and copy the
+# downloads-sha256 artifact here, after checking each entry against its upstream.

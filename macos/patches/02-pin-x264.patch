@@ -1,0 +1,19 @@
+--- a/script/build-x264.sh	2026-10-06 19:04:50
++++ b/script/build-x264.sh	2026-10-06 19:04:50
+@@ -33,13 +33,13 @@
+ checkStatus $? "change directory failed"
+ 
+ # download source
+-download https://code.videolan.org/videolan/x264/-/archive/master/x264-master.tar.gz "x264-master.tar.gz"
++download https://code.videolan.org/videolan/x264/-/archive/0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee/x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz "x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz"
+ checkStatus $? "download failed"
+ 
+ # unpack
+-tar -zxf "x264-master.tar.gz"
++tar -zxf "x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz"
+ checkStatus $? "unpack failed"
+-cd "x264-master/"
++cd "x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee/"
+ checkStatus $? "change directory failed"
+ 
+ # prepare build
