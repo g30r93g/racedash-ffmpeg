@@ -29,10 +29,24 @@ jobs:
           "$RUNNER_TEMP/py/bin/pip" install --quiet virtualenv
           echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
 
+      - name: Fetch the source mirror (fallback for failed upstream downloads)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(cat macos/build-script/version/ffmpeg)"
+          TAG="$(gh release list --limit 100 --json name,tagName -q ".[] | select(.name == \"Source mirror for the macOS ${VERSION} build\") | .tagName" | head -n1)"
+          mkdir -p "$RUNNER_TEMP/mirror"
+          if [[ -n "$TAG" ]]; then
+            gh release download "$TAG" -D "$RUNNER_TEMP/mirror"
+            (cd "$RUNNER_TEMP/mirror" && for f in *; do [[ "$(shasum -a 256 "$f" | cut -d' ' -f1)" == "$f" ]] || { echo "mirror file $f does not match its name" >&2; exit 1; }; done)
+          else
+            echo "::warning::no source mirror for ${VERSION}; upstream only"
+          fi
+
       - name: Build
         env:
           RACEDASH_SOURCES_STRICT: ${{ inputs.strict_sources }}
-        run: bash macos/build.sh "$RUNNER_TEMP/work"
+        run: RACEDASH_SOURCE_MIRROR="file://$RUNNER_TEMP/mirror" bash macos/build.sh "$RUNNER_TEMP/work"
 
       - name: Upload the download checksums (bootstrap input for macos/sources.sha256)
         if: always()

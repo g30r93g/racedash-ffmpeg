@@ -1,16 +1,28 @@
 --- a/script/functions.sh	2026-10-06 19:04:50
-+++ b/script/functions.sh	2026-10-06 19:04:59
-@@ -46,6 +46,31 @@
++++ b/script/functions.sh	2026-10-06 22:43:41
+@@ -45,7 +45,42 @@
+ download(){
      URL=$1
      NAME=$2
-     curl -o "$NAME" -L -f "$URL"
+-    curl -o "$NAME" -L -f "$URL"
++    # racedash-ffmpeg: the pinned checksum for this URL, if any
++    EXPECTED=""
++    if [ -n "$RACEDASH_SOURCES_SHA256" ]; then
++        EXPECTED="$(awk -v u="$URL" '$2 == u { print $1 }' "$RACEDASH_SOURCES_SHA256" | head -n 1)"
++    fi
++    curl -o "$NAME" -L -f --retry 3 --retry-delay 5 --connect-timeout 30 "$URL"
 +    if [ $? -ne 0 ]; then
-+        return 1
++        # racedash-ffmpeg: fall back to our mirror of the pinned file, by checksum
++        if [ -n "$EXPECTED" ] && [ -n "$RACEDASH_SOURCE_MIRROR" ]; then
++            echo "download failed; using the racedash-ffmpeg mirror of $EXPECTED"
++            curl -o "$NAME" -L -f "$RACEDASH_SOURCE_MIRROR/$EXPECTED" || return 1
++        else
++            return 1
++        fi
 +    fi
 +    SUM="$(shasum -a 256 "$NAME" | cut -d' ' -f1)"
 +    # racedash-ffmpeg: verify against the pinned checksum list
 +    if [ -n "$RACEDASH_SOURCES_SHA256" ]; then
-+        EXPECTED="$(awk -v u="$URL" '$2 == u { print $1 }' "$RACEDASH_SOURCES_SHA256")"
 +        if [ -z "$EXPECTED" ]; then
 +            if [ "$RACEDASH_SOURCES_STRICT" = "YES" ]; then
 +                echo "no pinned sha256 for $URL" >&2
@@ -32,7 +44,7 @@
  }
  
  prepareMeson(){
-@@ -60,7 +85,7 @@
+@@ -60,7 +95,7 @@
      else
          . .venv/bin/activate
          checkStatus $? "python activate virtual environment failed"
