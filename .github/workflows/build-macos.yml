@@ -1,5 +1,10 @@
 name: Build macOS (arm64)
 
+# Two jobs. `build` runs upstream build code (the vendored script, every library's
+# build system) with a READ-ONLY token and no persisted credentials. `release`
+# runs no build code at all: it only takes build's artifact and uploads it to a
+# draft release, and is the only job with write access.
+
 on:
   workflow_dispatch:
     inputs:
@@ -9,24 +14,27 @@ on:
         options: ['YES', 'NO']
         default: 'YES'
       release:
-        description: Create a draft release when acceptance passes
+        description: Upload the result to a draft release when acceptance passes
         type: boolean
         default: true
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 180
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - name: Python with virtualenv (the build script creates its meson venv with it)
+      - name: meson, hash-pinned (the build script uses the meson on PATH)
         run: |
           python3 -m venv "$RUNNER_TEMP/py"
-          "$RUNNER_TEMP/py/bin/pip" install --quiet virtualenv
+          "$RUNNER_TEMP/py/bin/pip" install --quiet --require-hashes --no-deps -r macos/requirements-meson.txt
           echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
 
       - name: Fetch the source mirror (fallback for failed upstream downloads)
@@ -34,13 +42,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="$(cat macos/build-script/version/ffmpeg)"
-          TAG="$(gh release list --limit 100 --json name,tagName -q ".[] | select(.name == \"Source mirror for the macOS ${VERSION} build\") | .tagName" | head -n1)"
           mkdir -p "$RUNNER_TEMP/mirror"
-          if [[ -n "$TAG" ]]; then
-            gh release download "$TAG" -D "$RUNNER_TEMP/mirror"
+          if gh release download "sources-mirror-macos-${VERSION}" --repo "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/mirror"; then
             (cd "$RUNNER_TEMP/mirror" && for f in *; do [[ "$(shasum -a 256 "$f" | cut -d' ' -f1)" == "$f" ]] || { echo "mirror file $f does not match its name" >&2; exit 1; }; done)
           else
-            echo "::warning::no source mirror for ${VERSION}; upstream only"
+            echo "::warning::no published source mirror for ${VERSION}; upstream downloads only"
           fi
 
       - name: Build
@@ -50,7 +56,7 @@ jobs:
 
       - name: Upload the download checksums (bootstrap input for macos/sources.sha256)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: downloads-sha256
           path: ${{ runner.temp }}/work/source-archive/downloads.sha256
@@ -58,7 +64,7 @@ jobs:
 
       - name: Upload build logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-logs
           path: ${{ runner.temp }}/work/build/log
@@ -67,30 +73,34 @@ jobs:
       - name: Acceptance
         run: |
           VERSION="$(cat macos/build-script/version/ffmpeg)"
-          bash macos/accept.sh "$RUNNER_TEMP/work/build/out/bin" "$VERSION"
+          bash macos/accept.sh "$RUNNER_TEMP/work/build/out/bin" "$VERSION" | tee "$RUNNER_TEMP/acceptance.txt"
 
       - name: Assemble release assets
         run: |
           set -euo pipefail
-          VERSION="$(cat macos/build-script/version/ffmpeg)"
           OUT="$RUNNER_TEMP/out"
           ARCHIVE="$RUNNER_TEMP/work/source-archive"
           mkdir -p "$OUT"
           cp "$RUNNER_TEMP/work/build/out/bin/ffmpeg" "$RUNNER_TEMP/work/build/out/bin/ffprobe" "$OUT/"
-          SRC="racedash-ffmpeg-${VERSION}-macos-arm64-src.tar"
+          # Exactly what the binary prints after "ffmpeg version".
+          FFV="$("$OUT/ffmpeg" -hide_banner -version | head -n1 | awk '{print $3}')"
+          [[ -n "$FFV" ]] || { echo "could not read the ffmpeg version token" >&2; exit 1; }
+          SRC="racedash-ffmpeg-${FFV}-darwin-arm64-src.tar"
           tar -C "$RUNNER_TEMP/work" -cf "$OUT/$SRC" source-archive
           cp LICENSE-GPL-3.0.txt NOTICE.txt "$OUT/"
+          bash macos/third-party-notices.sh "$ARCHIVE/downloads" "$OUT/THIRD-PARTY-NOTICES.txt"
+          cp "$RUNNER_TEMP/acceptance.txt" "$OUT/ACCEPTANCE.txt"
           file_json() {
             jq -n --arg file "$(basename "$1")" --arg sha256 "$(shasum -a 256 "$1" | cut -d' ' -f1)" \
               --argjson size "$(stat -f %z "$1")" '{file: $file, sha256: $sha256, size: $size}'
           }
-          # One entry per downloaded file: archived name, URL, sha256.
           SOURCES="$(cd "$ARCHIVE/downloads" && while read -r sum url; do
               name="$(ls | grep "^${sum:0:12}-" | head -n1)"
               jq -n --arg name "downloads/$name" --arg url "$url" --arg sha256 "$sum" '{name: $name, url: $url, revision: null, stage: null, sha256: $sha256}'
             done < "$ARCHIVE/downloads.sha256" | jq -s .)"
           jq -n \
-            --arg ffmpegVersion "$VERSION" --arg ffmpegRevision "n${VERSION}" \
+            --arg ffmpegVersion "$FFV" \
+            --arg ffmpegRevision "n$(cat macos/build-script/version/ffmpeg)" \
             --arg buildconf "$("$OUT/ffmpeg" -hide_banner -buildconf 2>/dev/null | grep -- '^ *--' | sed 's/^ *//' | tr '\n' ' ' | sed 's/ $//')" \
             --arg racedashFfmpegCommit "$GITHUB_SHA" \
             --arg runUrl "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
@@ -100,7 +110,7 @@ jobs:
             --arg x264Commit "0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee" \
             --arg macosVersion "$(sw_vers -productVersion)" \
             --arg xcodebuildVersion "$(xcodebuild -version | tr '\n' ' ' | sed 's/ $//')" \
-            --arg mesonVersion "${RACEDASH_MESON_VERSION:-1.12.1}" \
+            --arg mesonVersion "$(meson --version)" \
             --argjson ffmpeg "$(file_json "$OUT/ffmpeg")" \
             --argjson ffprobe "$(file_json "$OUT/ffprobe")" \
             --argjson sourceArchive "$(file_json "$OUT/$SRC")" \
@@ -117,27 +127,49 @@ jobs:
           ls -la "$OUT"
           jq 'del(.sources)' "$OUT/BUILDINFO.json"
 
-      - name: Upload assets as a workflow artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets
           path: ${{ runner.temp }}/out
+          if-no-files-found: error
 
-      - name: Create draft release (published by hand after review)
-        if: ${{ inputs.release && inputs.strict_sources == 'YES' }}
+  release:
+    needs: build
+    if: ${{ inputs.release && inputs.strict_sources == 'YES' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets
+          path: out
+
+      - name: Upload to the platform's draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          VERSION="$(cat macos/build-script/version/ffmpeg)"
-          TAG="ffmpeg-${VERSION}-macos-arm64-${RUN_NUMBER}"
+          set -euo pipefail
+          (cd out && sha256sum -c SHA256SUMS)
+          FFV="$(jq -r .ffmpegVersion out/BUILDINFO.json)"
+          TAG="ffmpeg-${FFV}-darwin-arm64"
+          # One stable tag per platform build. A previous DRAFT of the same tag is
+          # replaced; a published release is never touched.
+          STATE="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,isDraft -q ".[] | select(.tagName == \"$TAG\") | .isDraft" | head -n1)"
+          if [[ "$STATE" == "false" ]]; then
+            echo "release $TAG is already published; bump the version suffix instead" >&2; exit 1
+          elif [[ "$STATE" == "true" ]]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           {
-            echo "FFmpeg \`${VERSION}\` for macOS arm64, built by this repository from the vendored Martin Riedl build script (6a611e1) with the patches in \`macos/patches\`."
+            echo "FFmpeg \`${FFV}\` for macOS arm64, built by this repository from the vendored Martin Riedl build script (6a611e1) with the patches in \`macos/patches\`."
             echo
-            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`)."
-            echo "- Complete corresponding source: \`racedash-ffmpeg-${VERSION}-macos-arm64-src.tar\`. It holds every tarball the build downloaded (each checked against \`macos/sources.sha256\`) and the scripts as they ran."
-            echo "- Acceptance passed: no nonfree parts; VideoToolbox, libx264, libvpx-vp9 and ProRes encoders; overlay_videotoolbox; system-only linkage; crossfade smoke test."
-            echo "- Provenance and checksums: \`BUILDINFO.json\`, \`SHA256SUMS\`."
-            echo "- Produced by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
-          } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" --draft --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/out/*
+            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`). Linked third-party licences: \`THIRD-PARTY-NOTICES.txt\`."
+            echo "- Linked into the binaries: FFmpeg, x264, libvpx, zlib, and Apple system frameworks."
+            echo "- Complete corresponding source: \`racedash-ffmpeg-${FFV}-darwin-arm64-src.tar\`. It holds every tarball the build downloaded (each checked against \`macos/sources.sha256\`) and the scripts as they ran."
+            echo "- Acceptance (\`ACCEPTANCE.txt\`): no nonfree, DeckLink, libklvanc or OpenH264; VideoToolbox, libx264, libvpx-vp9, ProRes and AAC encoders; scale_vt; videotoolbox hwaccel; system-only linkage; crossfade smoke test."
+            echo "- Provenance and checksums: \`BUILDINFO.json\` (schema 2), \`SHA256SUMS\`."
+            echo "- Built by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          } > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes-file notes.md out/*

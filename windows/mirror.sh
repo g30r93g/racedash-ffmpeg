@@ -16,13 +16,14 @@
 #   BTBN_VARIANT     e.g. gpl            (never nonfree*)
 #   BTBN_ADDIN       e.g. 9.0
 #   IMAGE_DIGEST     sha256:... of ghcr.io/btbn/ffmpeg-builds/<target>-<variant>-<addin> used by that run
+#   BASE_IMAGE_DIGEST sha256:... of ghcr.io/btbn/ffmpeg-builds/base to run the download commands in
 #   OUT_DIR          where release assets are written
 #   GH_TOKEN         for the GitHub API (read-only use of public data)
 set -euo pipefail
 [[ -n "${TRACE:-}" ]] && set -x
 
 : "${BTBN_TAG:?}" "${BTBN_ASSET:?}" "${BTBN_RUN_ID:?}" "${BTBN_TARGET:?}" "${BTBN_VARIANT:?}" "${BTBN_ADDIN:?}"
-: "${IMAGE_DIGEST:?}" "${OUT_DIR:?}"
+: "${IMAGE_DIGEST:?}" "${BASE_IMAGE_DIGEST:?}" "${OUT_DIR:?}"
 
 case "$BTBN_VARIANT" in
   nonfree*) echo "refusing a nonfree variant: it is not redistributable" >&2; exit 1 ;;
@@ -120,9 +121,8 @@ mv "\$TGT.tmp" "\$TGT"
 STAGE_EOF
 done < "$WORK/stage-caches.txt"
 
-BASE_IMAGE="ghcr.io/btbn/ffmpeg-builds/base:latest"
+BASE_IMAGE="ghcr.io/btbn/ffmpeg-builds/base@${BASE_IMAGE_DIGEST}"
 docker pull -q "$BASE_IMAGE"
-BASE_IMAGE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$BASE_IMAGE")"
 docker run --rm -u "$(id -u):$(id -g)" \
   -v "$DL_SCRIPTS":/stages -v "$WORK/dldir":/dldir \
   -v "$WORK/btbn/scripts.d":/scripts.d -v "$WORK/btbn/util/dl_functions.sh":/dl_functions.sh \
@@ -152,7 +152,12 @@ case "$BTBN_TARGET" in
   linux64) PLATFORM="linux-x64"; EXE="" ;;
   *) echo "no platform key for target $BTBN_TARGET" >&2; exit 1 ;;
 esac
-FF_VERSION="$(sed -E 's/^ffmpeg-(n[0-9.]+(-[0-9]+-g[0-9a-f]+)?)-.*$/\1/' <<<"$BTBN_ASSET")"
+FF_BASE="$(sed -E 's/^ffmpeg-(n[0-9.]+(-[0-9]+-g[0-9a-f]+)?)-.*$/\1/' <<<"$BTBN_ASSET")"
+# Exactly what `ffmpeg -version` prints after "ffmpeg version": the compiled-in
+# version string, which BtbN extends with the build date.
+mapfile -t FF_TOKENS < <(strings "$OUT_DIR/ffmpeg${EXE}" | grep -E "^${FF_BASE}(-[0-9A-Za-z.]+)?\$" | sort -u)
+[[ ${#FF_TOKENS[@]} -eq 1 ]] || { echo "expected one version string starting ${FF_BASE}, found: ${FF_TOKENS[*]:-none}" >&2; exit 1; }
+FF_VERSION="${FF_TOKENS[0]}"
 BUILDCONF="$(strings "$OUT_DIR/ffmpeg${EXE}" | grep -m1 -- '--enable-gpl' | sed -E 's/^.*configuration: //' || true)"
 
 file_json() {  # <path> -> {file, sha256, size}
@@ -180,6 +185,31 @@ SOURCES_JSON="$(
   } | jq -s .
 )"
 
+{
+  echo "Third-party notices for the RaceDash ffmpeg / ffprobe binaries (${PLATFORM})"
+  echo "==========================================================================="
+  echo
+  echo "FFmpeg ${FF_VERSION} (BtbN ${BTBN_TARGET} ${BTBN_VARIANT} ${BTBN_ADDIN} build), statically linked with the"
+  echo "libraries of every enabled build stage. Below are the licence files found at the"
+  echo "top of each source archive in the complete corresponding source on this release."
+  echo
+} > "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+for ARCH in "$SRC"/*.tar.xz; do
+  LIC_DIR="$WORK/lic/$(basename "$ARCH" .tar.xz)"
+  mkdir -p "$LIC_DIR"
+  mapfile -t LICS < <(tar -tJf "$ARCH" | grep -E '^(\./)?([^/]+/)?(COPYING|COPYRIGHT|LICEN[CS]E|NOTICE|PATENTS)[^/]*$' | grep -v '/$' || true)
+  if [[ ${#LICS[@]} -eq 0 ]]; then
+    printf -- '--------------------------------------------------------------------------\n%s\n--------------------------------------------------------------------------\n(no top-level licence file; see the archive)\n\n' "$(basename "$ARCH")" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+    continue
+  fi
+  tar -xJf "$ARCH" -C "$LIC_DIR" "${LICS[@]}"
+  for L in "${LICS[@]}"; do
+    printf -- '--------------------------------------------------------------------------\n%s: %s\n--------------------------------------------------------------------------\n' "$(basename "$ARCH")" "$L" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+    cat "$LIC_DIR/$L" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+    echo >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+  done
+done
+
 jq -n \
   --arg platform "$PLATFORM" --arg ffmpegVersion "$FF_VERSION" --arg ffmpegRevision "$FF_COMMIT" \
   --arg buildconf "$BUILDCONF" \
@@ -191,7 +221,7 @@ jq -n \
   --arg buildRepo "https://github.com/BtbN/FFmpeg-Builds" --arg buildRepoCommit "$BUILD_REPO_COMMIT" \
   --arg upstreamRunUrl "$RUN_URL" \
   --arg image "ghcr.io/btbn/ffmpeg-builds/${BTBN_TARGET}-${BTBN_VARIANT}-${BTBN_ADDIN}@${IMAGE_DIGEST}" \
-  --arg sourceFetchImage "$BASE_IMAGE_DIGEST" \
+  --arg sourceFetchImage "$BASE_IMAGE" \
   --arg target "$BTBN_TARGET" --arg variant "$BTBN_VARIANT" --arg addin "$BTBN_ADDIN" \
   --argjson ffmpeg "$(file_json "$OUT_DIR/ffmpeg${EXE}")" \
   --argjson ffprobe "$(file_json "$OUT_DIR/ffprobe${EXE}")" \

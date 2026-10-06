@@ -1,5 +1,10 @@
 name: Mirror Windows build (BtbN)
 
+# Two jobs. `mirror` downloads the BtbN binary and runs BtbN's own download
+# commands to collect the source, with a READ-ONLY token and no persisted
+# credentials. `release` runs no upstream code: it only takes the artifact and
+# uploads it to a draft release, and is the only job with write access.
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,7 +13,7 @@ on:
         required: true
         default: autobuild-2026-10-06-13-06
       btbn_asset:
-        description: Release asset (a static gpl or lgpl build; never nonfree)
+        description: Release asset (a static gpl or lgpl win64 build; never nonfree)
         required: true
         default: ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip
       btbn_run_id:
@@ -31,16 +36,27 @@ on:
         description: Digest of the target-variant image the run used (from its "Build ffmpeg" job log)
         required: true
         default: sha256:eb2d665a2ebf72f1578b03fea4d05eddb0508d206aaaed704de554dff832077f
+      base_image_digest:
+        description: Digest of ghcr.io/btbn/ffmpeg-builds/base to run BtbN's download commands in
+        required: true
+        default: sha256:1f0d623e6c08e15e77e8cf00b0769f0e0e9a19915ffb901f423b5791287fffd5
+      release:
+        description: Upload the result to a draft release when the licence gates pass
+        type: boolean
+        default: true
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         run: |
@@ -57,8 +73,8 @@ jobs:
           BTBN_VARIANT: ${{ inputs.variant }}
           BTBN_ADDIN: ${{ inputs.addin }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
+          BASE_IMAGE_DIGEST: ${{ inputs.base_image_digest }}
           OUT_DIR: ${{ runner.temp }}/out
-          TRACE: "1"
         run: bash windows/mirror.sh
 
       - name: Licence gates on the configure string
@@ -74,25 +90,49 @@ jobs:
           done
           exit $fail
 
-      - name: Create draft release (published by hand after review)
+      - name: Upload release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    needs: mirror
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets
+          path: out
+
+      - name: Upload to the platform's draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          ASSET: ${{ inputs.btbn_asset }}
           BTBN_TAG: ${{ inputs.btbn_tag }}
-          TARGET: ${{ inputs.target }}
-          VARIANT: ${{ inputs.variant }}
-          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          OUT="$RUNNER_TEMP/out"
-          REV="$(jq -r .ffmpegRevision "$OUT/BUILDINFO.json")"
-          VER="$(sed -E 's/^ffmpeg-(n[0-9.]+-[0-9]+-g[0-9a-f]+)-.*$/\1/' <<<"$ASSET")"
-          TAG="ffmpeg-${VER}-${TARGET}-${RUN_NUMBER}"
+          set -euo pipefail
+          (cd out && sha256sum -c SHA256SUMS)
+          FFV="$(jq -r .ffmpegVersion out/BUILDINFO.json)"
+          PLATFORM="$(jq -r .platform out/BUILDINFO.json)"
+          REV="$(jq -r .ffmpegRevision out/BUILDINFO.json)"
+          TAG="ffmpeg-${FFV}-${PLATFORM}"
+          STATE="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,isDraft -q ".[] | select(.tagName == \"$TAG\") | .isDraft" | head -n1)"
+          if [[ "$STATE" == "false" ]]; then
+            echo "release $TAG is already published" >&2; exit 1
+          elif [[ "$STATE" == "true" ]]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           {
-            echo "FFmpeg \`${VER}\` (${TARGET}, ${VARIANT}, static), mirrored from BtbN/FFmpeg-Builds release \`${BTBN_TAG}\`."
+            echo "FFmpeg \`${FFV}\` (${PLATFORM}, static), mirrored unmodified from BtbN/FFmpeg-Builds release \`${BTBN_TAG}\`."
             echo
-            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`)."
-            echo "- Complete corresponding source: the \`racedash-ffmpeg-*-src.tar\` asset(s) on this release. FFmpeg @ \`${REV}\`, every enabled dependency exactly as BtbN's build fetched it, and the BtbN build repository at the commit that built this release."
-            echo "- Provenance and checksums: \`BUILDINFO.json\`, \`SHA256SUMS\`."
-            echo "- Produced by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
-          } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" --draft --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "$OUT"/*
+            echo "- Licence: GPL-3.0-or-later (\`LICENSE-GPL-3.0.txt\`, \`NOTICE.txt\`). Licence files of every linked library: \`THIRD-PARTY-NOTICES.txt\`."
+            echo "- Complete corresponding source: the \`racedash-ffmpeg-*-src.tar\` asset(s). They hold FFmpeg @ \`${REV}\`, every enabled dependency exactly as BtbN's build fetched it, and the BtbN build repository at the commit that built this release."
+            echo "- Provenance and checksums: \`BUILDINFO.json\` (schema 2), \`SHA256SUMS\`."
+            echo "- Mirrored by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          } > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes-file notes.md out/*

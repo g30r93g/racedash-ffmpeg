@@ -23,7 +23,7 @@ binary, for as long as the binary is distributed.
 
 Origins
 -------
-- Windows (and Linux, for CI): mirrored, unmodified, from
+- Windows: mirrored, unmodified, from
   BtbN/FFmpeg-Builds (https://github.com/BtbN/FFmpeg-Builds, MIT licence for
   its build scripts). The exact upstream release, build run, build-repository
   commit and image digest are recorded in BUILDINFO.json.

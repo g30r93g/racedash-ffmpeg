@@ -9,11 +9,12 @@ RaceDash ships `ffmpeg` and `ffprobe` as separate executables. Those binaries ar
 
 ## Releases
 
-| Platform | Release tag pattern | How it is produced |
+| Platform | Release tag | How it is produced |
 |---|---|---|
-| Windows x64 | `ffmpeg-n<version>-win64-<run>` | Mirrored, unmodified, from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (static `gpl` variant, never `nonfree`) by [`mirror-windows.yml`](.github/workflows/mirror-windows.yml) |
-| Linux x64 (CI only) | `ffmpeg-n<version>-linux64-<run>` | Same workflow, with the `linux64-gpl` asset |
-| macOS arm64 | `ffmpeg-<version>-macos-arm64-<run>` | Built here by [`build-macos.yml`](.github/workflows/build-macos.yml) from a trimmed, pinned fork of Martin Riedl's build script |
+| Windows x64 | `ffmpeg-<ffmpegVersion>-win32-x64`, e.g. `ffmpeg-n9.0.2-22-g46d8f462ee-20261006-win32-x64` | Mirrored, unmodified, from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (static `gpl` variant, never `nonfree`) by [`mirror-windows.yml`](.github/workflows/mirror-windows.yml) |
+| macOS arm64 | `ffmpeg-<ffmpegVersion>-darwin-arm64`, e.g. `ffmpeg-9.0.2-racedash-ffmpeg-darwin-arm64` | Built here by [`build-macos.yml`](.github/workflows/build-macos.yml) from a trimmed, pinned fork of Martin Riedl's build script |
+
+`<ffmpegVersion>` is exactly the token the binary prints after `ffmpeg version`. A tag is published once and never moved; a rebuild of the same version replaces only an unpublished draft.
 
 Every release holds:
 
@@ -21,13 +22,15 @@ Every release holds:
 |---|---|
 | `ffmpeg[.exe]`, `ffprobe[.exe]` | The binaries |
 | `racedash-ffmpeg-*-src.tar` (split into `.partNN` when over 2 GiB) | The complete corresponding source (below) |
-| `BUILDINFO.json` | Provenance: upstream release, build run and commit, image digests, the FFmpeg revision, and the SHA-256 of every source archive and binary |
-| `SHA256SUMS` | Checksums of every asset |
+| `BUILDINFO.json` | Provenance (schema below): upstream release, build run and commit, image digests, the FFmpeg revision, and the SHA-256 of every source archive and binary |
+| `SHA256SUMS` | Checksums of every other asset |
 | `LICENSE-GPL-3.0.txt`, `NOTICE.txt` | Licence and notices |
+| `THIRD-PARTY-NOTICES.txt` | The licence texts of FFmpeg and of every library linked into the binaries, taken from the exact source archives |
+| `ACCEPTANCE.txt` (macOS) | The output of the acceptance checks the release passed |
 
 ## Where the source is
 
-### Windows and Linux (BtbN mirror)
+### Windows (BtbN mirror)
 
 The source tar contains `src/` with:
 - `ffmpeg-<commit>.tar.xz`: FFmpeg at the exact revision in the binary's version string (`…-g<rev>`);
@@ -57,7 +60,7 @@ The source tar contains:
 
 | Platform | Linked libraries (static) | Licences |
 |---|---|---|
-| macOS arm64 | FFmpeg; x264 (`0480cb05`); libvpx 1.16.0; zlib 1.3.2; Apple system frameworks (VideoToolbox, CoreMedia, CoreVideo, AudioToolbox, Metal, …; GPLv3 system-library exception) | GPL-3.0-or-later (FFmpeg `--enable-gpl --enable-version3`); x264 GPL-2.0-or-later; libvpx BSD-3-Clause; zlib Zlib |
+| macOS arm64 | Static: FFmpeg 9.0.2, x264 (`0480cb05`), libvpx 1.16.0, zlib 1.3.2. System (not distributed; GPLv3 system-library exception): `/usr/lib/libSystem`, `libbz2`, `libiconv`, `libobjc`, and frameworks under `/System/Library/Frameworks` (VideoToolbox, CoreMedia, CoreVideo, AudioToolbox, AVFoundation, Metal, CoreImage, …) | GPL-3.0-or-later (FFmpeg `--enable-gpl --enable-version3`); x264 GPL-2.0-or-later; libvpx BSD-3-Clause (with its patent grant); zlib Zlib |
 | Windows x64 | Exactly the libraries BtbN's `win64 gpl 9.0` build enables, listed with their configure flags in `BUILDINFO.json` (`buildconf`) and one source archive each in `sources` | Each archive carries its own licence. The whole binary is GPL-3.0-or-later |
 
 **macOS.** The vendored script also *builds* openssl, libxml2, fribidi, freetype, fontconfig, harfbuzz, libass, libogg and SDL, plus its build tools. Patch 04 keeps every one of them **out** of the binary. The acceptance step fails if any of them is configured in. Their tarballs are still archived, because they are part of what the script ran.
@@ -80,10 +83,10 @@ None of these carries a source obligation for the binary. The image definitions 
 ```jsonc
 {
   "schema": 2,
-  "platform": "darwin-arm64" | "win32-x64" | "linux-x64",
+  "platform": "darwin-arm64" | "win32-x64",
   "kind": "build" | "mirror",
   "license": "GPL-3.0-or-later",
-  "ffmpegVersion": "9.0.2" | "n9.0.2-22-g46d8f462ee",   // `ffmpeg -version` starts with "ffmpeg version <ffmpegVersion>"
+  "ffmpegVersion": "9.0.2-racedash-ffmpeg" | "n9.0.2-22-g46d8f462ee-20261006",  // exactly the token after "ffmpeg version" in `ffmpeg -version`
   "ffmpegRevision": "n9.0.2" | "<40-hex FFmpeg commit>",  // release tag (mac) or exact commit (mirror)
   "buildconf": "<the configure line>",
   "racedashFfmpegCommit": "<commit of this repository>",
@@ -106,6 +109,12 @@ None of these carries a source obligation for the binary. The image definitions 
 ```
 
 Consumers verify a binary with `binaries.<tool>.sha256`. `SHA256SUMS` lists every release asset, `BUILDINFO.json` included.
+
+## Supply chain
+
+- **Read-only build jobs.** Every job that runs upstream build code (the build script, each library's build system, BtbN's download commands) has a read-only token and no persisted git credentials. A separate `release` job, which runs no build code, downloads the build's artifact and is the only job allowed to write a release.
+- **Pins.** Actions are pinned by commit SHA. meson is installed from [`macos/requirements-meson.txt`](macos/requirements-meson.txt) with `--require-hashes`. Every source tarball is pinned in [`macos/sources.sha256`](macos/sources.sha256). BtbN's images are pinned by digest (workflow inputs).
+- **Source mirror.** If an upstream download fails, the macOS build fetches the pinned file from the `sources-mirror-macos-<version>` release, by its sha256, and verifies it.
 
 ## Licences
 
