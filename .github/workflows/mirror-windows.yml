@@ -58,6 +58,7 @@ jobs:
           BTBN_ADDIN: ${{ inputs.addin }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
           OUT_DIR: ${{ runner.temp }}/out
+          TRACE: "1"
         run: bash windows/mirror.sh
 
       - name: Check the configure string

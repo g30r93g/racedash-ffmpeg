@@ -19,6 +19,7 @@
 #   OUT_DIR          where release assets are written
 #   GH_TOKEN         for the GitHub API (read-only use of public data)
 set -euo pipefail
+[[ -n "${TRACE:-}" ]] && set -x
 
 : "${BTBN_TAG:?}" "${BTBN_ASSET:?}" "${BTBN_RUN_ID:?}" "${BTBN_TARGET:?}" "${BTBN_VARIANT:?}" "${BTBN_ADDIN:?}"
 : "${IMAGE_DIGEST:?}" "${OUT_DIR:?}"
@@ -77,7 +78,7 @@ git -C "$WORK/ffmpeg" archive --format=tar --prefix="ffmpeg-${FF_COMMIT}/" "$FF_
   | xz -T0 -9 > "$SRC/ffmpeg-${FF_COMMIT}.tar.xz"
 
 # 5. Source: every enabled dependency stage, fetched with BtbN's own download commands.
-(cd "$WORK/btbn" && ./generate.sh "$BTBN_TARGET" "$BTBN_VARIANT" "$BTBN_ADDIN" >/dev/null)
+(cd "$WORK/btbn" && ./generate.sh "$BTBN_TARGET" "$BTBN_VARIANT" "$BTBN_ADDIN") || { echo "generate.sh failed" >&2; exit 1; }
 mapfile -t STAGE_CACHES < <(grep -o '\.cache/downloads/[^,[:space:]]*\.tar\.xz' "$WORK/btbn/Dockerfile" | sed 's|.cache/downloads/||' | sort -u)
 [[ ${#STAGE_CACHES[@]} -gt 0 ]] || { echo "generate.sh produced no download stages" >&2; exit 1; }
 printf '%s\n' "${STAGE_CACHES[@]}" > "$WORK/stage-caches.txt"
