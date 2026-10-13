@@ -194,15 +194,46 @@ SOURCES_JSON="$(
   echo "top of each source archive in the complete corresponding source on this release."
   echo
 } > "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
+# Extract the archive member <member> that <link> (a symlink extracted from
+# <archive> into <dir>) points to, following a chain of links, so `cat` on the
+# link reads the licence text. glib's COPYING, for one, is a symlink into
+# LICENSES/. Fails when a target is absolute or not in the archive.
+extract_link_target() {  # <archive> <listing file> <dir> <member>
+  local arch="$1" listing="$2" dir="$3" member="$4" hops=0 target joined part
+  local -a parts out
+  while [[ -L "$dir/$member" ]]; do
+    (( ++hops <= 8 )) || { echo "$arch: too many symlinks at $member" >&2; return 1; }
+    target="$(readlink "$dir/$member")"
+    [[ "$target" != /* ]] || { echo "$arch: $member links outside the archive ($target)" >&2; return 1; }
+    joined="$(dirname "$member")/$target"
+    IFS=/ read -ra parts <<<"$joined"
+    out=()
+    for part in "${parts[@]}"; do
+      case "$part" in
+        ''|.) ;;
+        ..) (( ${#out[@]} > 0 )) || { echo "$arch: $member links outside the archive ($target)" >&2; return 1; }
+            unset 'out[${#out[@]}-1]' ;;
+        *) out+=("$part") ;;
+      esac
+    done
+    joined="$(IFS=/; echo "${out[*]}")"
+    member="$(grep -m1 -Fx -e "$joined" -e "./$joined" "$listing" || true)"
+    [[ -n "$member" ]] || { echo "$arch: symlink target $joined is not in the archive" >&2; return 1; }
+    tar -xJf "$arch" -C "$dir" "$member"
+  done
+}
+
 for ARCH in "$SRC"/*.tar.xz; do
   LIC_DIR="$WORK/lic/$(basename "$ARCH" .tar.xz)"
   mkdir -p "$LIC_DIR"
-  mapfile -t LICS < <(tar -tJf "$ARCH" | grep -E '^(\./)?([^/]+/)?(COPYING|COPYRIGHT|LICEN[CS]E|NOTICE|PATENTS)[^/]*$' | grep -v '/$' || true)
+  tar -tJf "$ARCH" > "$LIC_DIR.list"
+  mapfile -t LICS < <(grep -E '^(\./)?([^/]+/)?(COPYING|COPYRIGHT|LICEN[CS]E|NOTICE|PATENTS)[^/]*$' "$LIC_DIR.list" | grep -v '/$' || true)
   if [[ ${#LICS[@]} -eq 0 ]]; then
     printf -- '--------------------------------------------------------------------------\n%s\n--------------------------------------------------------------------------\n(no top-level licence file; see the archive)\n\n' "$(basename "$ARCH")" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
     continue
   fi
   tar -xJf "$ARCH" -C "$LIC_DIR" "${LICS[@]}"
+  for L in "${LICS[@]}"; do extract_link_target "$ARCH" "$LIC_DIR.list" "$LIC_DIR" "$L"; done
   for L in "${LICS[@]}"; do
     printf -- '--------------------------------------------------------------------------\n%s: %s\n--------------------------------------------------------------------------\n' "$(basename "$ARCH")" "$L" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
     cat "$LIC_DIR/$L" >> "$OUT_DIR/THIRD-PARTY-NOTICES.txt"
